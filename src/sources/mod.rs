@@ -29,7 +29,8 @@ pub enum Bootstrapper {
     #[cfg(feature = "aws")]
     S3(s3::Stage),
 
-    OurCaseB(our::Stage),
+    #[cfg(target_family = "unix")]
+    TxOverSocket(tx_over_socket::Stage),
 }
 
 impl Bootstrapper {
@@ -37,8 +38,8 @@ impl Bootstrapper {
         match self {
             Bootstrapper::N2N(p) => &mut p.output,
 
-            // #[cfg(target_family = "our")]
-            Bootstrapper::OurCaseB(p) => &mut p.output,
+            #[cfg(target_family = "unix")]
+            Bootstrapper::TxOverSocket(p) => &mut p.output,
 
             #[cfg(target_family = "unix")]
             Bootstrapper::N2C(p) => &mut p.output,
@@ -64,7 +65,8 @@ impl Bootstrapper {
             #[cfg(feature = "aws")]
             Bootstrapper::S3(x) => gasket::runtime::spawn_stage(x, policy),
 
-            Bootstrapper::OurCaseB(x) => gasket::runtime::spawn_stage(x, policy),
+            #[cfg(target_family = "unix")]
+            Bootstrapper::TxOverSocket(x) => gasket::runtime::spawn_stage(x, policy),
         }
     }
 }
@@ -77,8 +79,8 @@ pub enum Config {
     #[cfg(target_family = "unix")]
     N2C(n2c::Config),
 
-   //#[cfg(target_family = "our")]
-    OurCaseC(our::Config),
+    #[cfg(target_family = "unix")]
+    TxOverSocket(tx_over_socket::Config),
 
     #[cfg(feature = "u5c")]
     U5C(u5c::Config),
@@ -101,7 +103,8 @@ impl Config {
             #[cfg(feature = "aws")]
             Config::S3(c) => Ok(Bootstrapper::S3(c.bootstrapper(ctx)?)),
 
-            Config::OurCaseC(c) => Ok(Bootstrapper::OurCaseB(c.bootstrapper(ctx)?)),
+            #[cfg(target_family = "unix")]
+            Config::TxOverSocket(c) => Ok(Bootstrapper::TxOverSocket(c.bootstrapper(ctx)?)),
 
         }
     }
