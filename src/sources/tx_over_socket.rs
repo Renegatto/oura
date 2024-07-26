@@ -1,26 +1,43 @@
+
+use core::str;
 use std::path::PathBuf;
 
 use gasket::framework;
-use pallas::network::multiplexer::RunningPlexer;
+use serde::Serialize;
 use serde::Deserialize;
 use tracing::{debug, info};
 use gasket::framework::AsWorkError;
-use super::node_client_impl::CanHandshake;
-use super::node_client_impl::CanConnect;
-use super::node_client_impl::CanChainsync;
-use pallas::ledger::traverse::MultiEraBlock;
-use pallas::network::miniprotocols::chainsync::{BlockContent, NextResponse};
+use pallas::network::miniprotocols::chainsync::NextResponse;
 use pallas::network::miniprotocols::Point;
-use bytes::Bytes;
 use hex::ToHex;
-
+use anyhow::Context;
 use crate::framework as oura;
-use pallas::codec::minicbor as minicbor;
+use tokio::net;
+use net::UnixDatagram;
 
+trait Read<A,E> {
+    async fn read(&mut self) -> Result<A,E>;
+}
+pub struct PointfulTxDatagram {
+    source: net::UnixDatagram
+}
+impl Read<PointfulTx,anyhow::Error> for PointfulTxDatagram {
+    async fn read(&mut self) -> Result<PointfulTx,anyhow::Error> {
+
+        let buf: &mut [u8] = &mut [];
+        let mut src: &mut net::UnixDatagram = &mut self.source;
+        (&mut src).recv(buf).await 
+        .context("Couldn't wait for readable")?;
+        let str: &mut str = str::from_utf8_mut(buf)
+        .context("Can't decode read data")?;
+        serde_json::from_str(&str)
+        .context("Can't parse data")
+    }
+}
 pub struct OurClient {
    // plexer: RunningPlexer,
    // handshake: pallas::network::miniprotocols::handshake::N2CClient,
-    chainsync: PointfulTx,// pallas::network::miniprotocols::chainsync::Client<PointfulTx>,
+    tx_source: PointfulTxDatagram,// pallas::network::miniprotocols::chainsync::Client<PointfulTx>,
    // statequery: pallas::network::miniprotocols::localstate::Client,
 }
 
@@ -33,7 +50,7 @@ pub struct OurClient {
 pub struct Stage {
     config: Config,
 
-    chain: oura::GenesisValues,
+    // chain: oura::GenesisValues,
 
     // intersect: oura::IntersectConfig,
 
@@ -58,33 +75,20 @@ pub struct Worker {
     peer_session: OurClient,
 }
 
-// #[derive(minicbor::Encode, minicbor::Decode)]
-// pub struct F {
-//     #[n(0)]
-//     aaa: u32
-// }
-// #[derive(minicbor::Encode)]
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "Point")]
+pub enum PointDef {
+    Origin,
+    Specific(u64, Vec<u8>),
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct PointfulTx {
-    // #[n(0)]
     parsed_tx: oura::ParsedTx,
-    // #[n(1)]
+    #[serde(with = "PointDef")]
     point: Point,
 }
-// impl pallas::codec::minicbor::Encode<()> for PointfulTx {
-//     fn encode<W: pallas::codec::minicbor::encode::Write>(&self, e: &mut pallas::codec::minicbor::Encoder<W>, ctx: &mut ()) -> Result<(), pallas::codec::minicbor::encode::Error<W::Error>> {
-//         todo!()
-//     }
-// }
-// impl pallas::codec::minicbor::Decode<'_,()> for PointfulTx {
-//     fn decode(d: &mut pallas::codec::minicbor::Decoder, ctx: &mut ()) -> Result<Self, pallas::codec::minicbor::decode::Error> {
-//         todo!()
-//     }
-// }
-impl From<PointfulTx> for Vec<u8> {
-    fn from(other: PointfulTx) -> Self {
-        todo!()
-    }
-}
+
 trait ProcessNext<Content> {
     async fn process_next(
         &mut self,
@@ -153,57 +157,46 @@ impl ProcessNext<PointfulTx> for Worker {
         }
     }
 }
-impl super::node_client_impl::CanNew for OurClient {
-    fn new(bearer: pallas::network::multiplexer::Bearer) -> Self {
-        // let mut plexer = multiplexer::Plexer::new(bearer);
 
-        // let hs_channel = plexer.subscribe_client(PROTOCOL_N2C_HANDSHAKE);
-        // let cs_channel = plexer.subscribe_client(PROTOCOL_N2C_CHAIN_SYNC);
-        // let sq_channel = plexer.subscribe_client(PROTOCOL_N2C_STATE_QUERY);
+async fn connect(socket_path: impl AsRef<std::path::Path>) -> Result<OurClient, anyhow::Error> {
+    debug!("Binding unix reader socket");
+    let listen_from = UnixDatagram::bind(&socket_path)?;
+    debug!("Connected to the socket");
+    Ok(OurClient { tx_source: PointfulTxDatagram { source: listen_from } })
+}
 
-        // let plexer = plexer.spawn();
-
-        Self {
-           // plexer,
-            //handshake: handshake::Client::new(hs_channel),
-            chainsync: pallas::network::miniprotocols::chainsync::Client::new(todo!()/*cs_channel*/),
-            //statequery: localstate::Client::new(sq_channel),
-        }
-    }
-}
-impl super::node_client_impl::CanHandshake for OurClient {
-    fn handshake(&mut self) -> &mut pallas::network::miniprotocols::handshake::N2CClient {
-        todo!()
-    }
-}
-impl CanChainsync<PointfulTx> for OurClient {
-    fn chainsync(&mut self) -> &mut pallas::network::miniprotocols::chainsync::Client<PointfulTx> {
-        todo!()
-    }
-}
-impl super::node_client_impl::CanConnect for OurClient {
+pub trait CanConnect: Sized {
     #[cfg(unix)]
-    async fn connect(path: impl AsRef<std::path::Path>, magic: u64) -> Result<Self, pallas::network::facades::Error> {
-        let bearer = pallas::network::multiplexer::Bearer::connect_unix(path)
-            .await
-            .map_err(pallas::network::facades::Error::ConnectFailure)?;
+    async fn connect(
+        path: impl AsRef<std::path::Path>,
+       // magic: u64,
+    ) -> Result<Self, pallas::network::facades::Error>;
+}
+impl CanConnect for OurClient {
+    #[cfg(unix)]
+    async fn connect(path: impl AsRef<std::path::Path>) -> Result<Self, pallas::network::facades::Error> {
+        // let bearer = pallas::network::multiplexer::Bearer::connect_unix(path)
+        //     .await
+        //     .map_err(pallas::network::facades::Error::ConnectFailure)?;
 
-        let mut client: OurClient = super::node_client_impl::CanNew::new(bearer);
+        // let mut client: OurClient = super::node_client_impl::CanNew::new(bearer);
 
-        let versions = pallas::network::miniprotocols::handshake::n2c::VersionTable::v10_and_above(magic);
+        // let versions = pallas::network::miniprotocols::handshake::n2c::VersionTable::v10_and_above(magic);
 
-        let handshake = client
-            .handshake()
-            .handshake(versions)
-            .await
-            .map_err(pallas::network::facades::Error::HandshakeProtocol)?;
+        // let handshake = client
+        //     .handshake()
+        //     .handshake(versions)
+        //     .await
+        //     .map_err(pallas::network::facades::Error::HandshakeProtocol)?;
 
-        if let pallas::network::miniprotocols::handshake::Confirmation::Rejected(reason) = handshake {
-            tracing::error!(?reason, "handshake refused");
-            return Err(pallas::network::facades::Error::IncompatibleVersion);
-        }
+        // if let pallas::network::miniprotocols::handshake::Confirmation::Rejected(reason) = handshake {
+        //     tracing::error!(?reason, "handshake refused");
+        //     return Err(pallas::network::facades::Error::IncompatibleVersion);
+        // }
 
-        Ok(client)
+      connect(path).await.map_err(|err|
+        pallas::network::facades::Error::ConnectFailure(std::io::Error::other(err))
+      )
     }   
 }
 
@@ -212,10 +205,12 @@ impl gasket::framework::Worker<Stage> for Worker {
     async fn bootstrap(stage: &Stage) -> Result<Self, framework::WorkerError> {
         debug!("connecting");
 
-        let mut peer_session = OurClient::connect(&stage.config.socket_path, stage.chain.magic)
+        let peer_session = OurClient::connect(&stage.config.socket_path)
             .await
-            .or_retry()?;
-
+            .or_retry()
+            ?;
+        debug!("Connected");
+      
         // if stage.breadcrumbs.is_empty() {
         //     intersect_from_config(&mut peer_session, &stage.intersect).await?;
         // } else {
@@ -231,20 +226,37 @@ impl gasket::framework::Worker<Stage> for Worker {
         &mut self,
         _stage: &mut Stage,
     ) -> Result<framework::WorkSchedule<NextResponse<PointfulTx>>, framework::WorkerError> {
-        let client = self.peer_session.chainsync();
+        let client = &mut self.peer_session.tx_source;
+        debug!("reading next");
+        client.read()
+        .await
+        .and_then(|pointful_tx| {
+            debug!("requesting next block");
+            let ptx: PointfulTx = pointful_tx.clone();
+            Ok(framework::WorkSchedule::Unit::<NextResponse<PointfulTx>>(
+                NextResponse::RollForward(
+                    pointful_tx,
+                    pallas::network::miniprotocols::chainsync::Tip(ptx.point,454)
+                )
+            ))
+        })
+        .map_err(|err| {
+            println!("Error {err}"); 
+            framework::WorkerError::Recv
+        })
 
-        let next = match client.has_agency() {
-            true => {
-                info!("requesting next block");
-                client.request_next().await.or_restart()?
-            }
-            false => {
-                info!("awaiting next block (blocking)");
-                client.recv_while_must_reply().await.or_restart()?
-            }
-        };
+        // let next = match client.has_agency() {
+        //     true => {
+        //         info!("requesting next block");
+        //         client.request_next().await.or_restart()?
+        //     }
+        //     false => {
+        //         info!("awaiting next block (blocking)");
+        //         client.recv_while_must_reply().await.or_restart()?
+        //     }
+        // };
 
-        Ok(framework::WorkSchedule::Unit(next))
+        // Ok(framework::WorkSchedule::Unit(next))
     }
 
     async fn execute(
@@ -266,7 +278,7 @@ impl Config {
         let stage = Stage {
             config: self,
             breadcrumbs: ctx.breadcrumbs.clone(),
-            chain: ctx.chain.clone().into(),
+            // chain: ctx.chain.clone().into(),
             // intersect: ctx.intersect.clone(),
             output: Default::default(),
             ops_count: Default::default(),

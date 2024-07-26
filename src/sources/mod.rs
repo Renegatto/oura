@@ -8,8 +8,7 @@ use crate::framework::*;
 
 pub mod n2c;
 pub mod n2n;
-pub mod our;
-pub mod node_client_impl;
+pub mod tx_over_socket;
 
 #[cfg(feature = "u5c")]
 pub mod u5c;
