@@ -8,6 +8,7 @@ use crate::framework::*;
 
 pub mod n2c;
 pub mod n2n;
+pub mod tx_over_socket;
 
 #[cfg(feature = "u5c")]
 pub mod u5c;
@@ -15,6 +16,7 @@ pub mod u5c;
 #[cfg(feature = "aws")]
 pub mod s3;
 
+// we need to add our own case here
 pub enum Bootstrapper {
     N2N(n2n::Stage),
 
@@ -26,12 +28,18 @@ pub enum Bootstrapper {
 
     #[cfg(feature = "aws")]
     S3(s3::Stage),
+
+    #[cfg(target_family = "unix")]
+    TxOverSocket(tx_over_socket::Stage),
 }
 
 impl Bootstrapper {
     pub fn borrow_output(&mut self) -> &mut SourceOutputPort {
         match self {
             Bootstrapper::N2N(p) => &mut p.output,
+
+            #[cfg(target_family = "unix")]
+            Bootstrapper::TxOverSocket(p) => &mut p.output,
 
             #[cfg(target_family = "unix")]
             Bootstrapper::N2C(p) => &mut p.output,
@@ -56,6 +64,9 @@ impl Bootstrapper {
 
             #[cfg(feature = "aws")]
             Bootstrapper::S3(x) => gasket::runtime::spawn_stage(x, policy),
+
+            #[cfg(target_family = "unix")]
+            Bootstrapper::TxOverSocket(x) => gasket::runtime::spawn_stage(x, policy),
         }
     }
 }
@@ -67,6 +78,9 @@ pub enum Config {
 
     #[cfg(target_family = "unix")]
     N2C(n2c::Config),
+
+    #[cfg(target_family = "unix")]
+    TxOverSocket(tx_over_socket::Config),
 
     #[cfg(feature = "u5c")]
     U5C(u5c::Config),
@@ -88,6 +102,10 @@ impl Config {
 
             #[cfg(feature = "aws")]
             Config::S3(c) => Ok(Bootstrapper::S3(c.bootstrapper(ctx)?)),
+
+            #[cfg(target_family = "unix")]
+            Config::TxOverSocket(c) => Ok(Bootstrapper::TxOverSocket(c.bootstrapper(ctx)?)),
+
         }
     }
 }
