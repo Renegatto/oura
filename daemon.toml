@@ -1,0 +1,12 @@
+[source]
+type = "TxOverSocket"
+socket_path = "/home/alexey/oura/our-daemon.socket"
+
+[chain]
+type = "preprod"
+
+[intersect]
+type = "Tip"
+
+[sink]
+type = "Stdout"

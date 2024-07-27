@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::process;
-
+mod make_socket;
 mod console;
 mod daemon;
 
@@ -10,6 +10,7 @@ mod daemon;
 #[clap(author, version, about, long_about = None)]
 enum Oura {
     Daemon(daemon::Args),
+    Socket(make_socket::Args),
 }
 
 fn main() {
@@ -17,6 +18,7 @@ fn main() {
 
     let result = match args {
         Oura::Daemon(x) => daemon::run(&x),
+        Oura::Socket(args) => make_socket::run(args),
     };
 
     if let Err(err) = &result {
