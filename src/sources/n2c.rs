@@ -88,16 +88,7 @@ pub struct Worker {
     peer_session: NodeClient,
 }
 
-trait ProcessNext<Content> {
-    async fn process_next(
-        &mut self,
-        stage: &mut Stage,
-        next: &NextResponse<Content>,
-    ) -> Result<(), WorkerError>;
-}
-
-// it happens somewhere down there
-impl ProcessNext<BlockContent> for Worker {
+impl Worker {
     async fn process_next(
         &mut self,
         stage: &mut Stage,
