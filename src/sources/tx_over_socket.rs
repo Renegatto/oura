@@ -21,17 +21,45 @@ trait Read<A,E> {
 pub struct PointfulTxDatagram {
     source: net::UnixDatagram
 }
+const MAX_MESSAGE_SIZE_B: usize = 4_000_000; //4MB limit
 impl Read<PointfulTx,anyhow::Error> for PointfulTxDatagram {
     async fn read(&mut self) -> Result<PointfulTx,anyhow::Error> {
 
-        let buf: &mut [u8] = &mut [];
-        let mut src: &mut net::UnixDatagram = &mut self.source;
-        (&mut src).recv(buf).await 
-        .context("Couldn't wait for readable")?;
-        let str: &mut str = str::from_utf8_mut(buf)
-        .context("Can't decode read data")?;
-        serde_json::from_str(&str)
-        .context("Can't parse data")
+        let raw_buf: &mut Vec<u8> = &mut vec![0u8;MAX_MESSAGE_SIZE_B]; 
+        let result: &mut String = &mut String::new();
+        let src: &mut net::UnixDatagram = &mut self.source;
+  
+        src.recv(raw_buf).await 
+        .context("Couldn't wait for readable")
+        .and_then(|message_size| {
+            // no need to continue if message is just partial
+            if MAX_MESSAGE_SIZE_B < message_size {
+                Err(
+                    anyhow::Error::new(
+                        std::io::Error::other(
+                            "Received message is too big")
+                        )
+                    )?;
+            }
+            debug!("Message size {}",message_size);
+            // shrinking the buffer to match the message size, otherwise
+            // the string will have trailing NULLs which serde is unable to parse
+            let buf_exact: &mut [u8] = &mut vec![0u8;message_size];
+            buf_exact.clone_from_slice( &raw_buf[0..message_size]);
+
+            str::from_utf8_mut(buf_exact)
+                .map(|parsed|
+                  parsed.clone_into(result)
+                )
+                .context("Can't decode read data")?;
+            Ok(())
+        })?;
+        serde_json::from_str(&result.trim())
+        .map_err(|e: serde_json::Error|
+            anyhow::Error::new(
+                std::io::Error::other(
+                format!("Can't parse data <{result}> because of {}", e.to_string())))
+        )
     }
 }
 pub struct OurClient {
