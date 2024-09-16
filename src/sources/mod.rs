@@ -17,6 +17,9 @@ pub mod u5c;
 pub mod s3;
 
 // we need to add our own case here
+#[cfg(feature = "mithril")]
+pub mod mithril;
+
 pub enum Bootstrapper {
     N2N(n2n::Stage),
 
@@ -31,6 +34,9 @@ pub enum Bootstrapper {
 
     #[cfg(target_family = "unix")]
     TxOverSocket(tx_over_socket::Stage),
+
+    #[cfg(feature = "mithril")]
+    Mithril(mithril::Stage),
 }
 
 impl Bootstrapper {
@@ -49,6 +55,9 @@ impl Bootstrapper {
 
             #[cfg(feature = "aws")]
             Bootstrapper::S3(p) => &mut p.output,
+
+            #[cfg(feature = "mithril")]
+            Bootstrapper::Mithril(p) => &mut p.output,
         }
     }
 
@@ -67,6 +76,9 @@ impl Bootstrapper {
 
             #[cfg(target_family = "unix")]
             Bootstrapper::TxOverSocket(x) => gasket::runtime::spawn_stage(x, policy),
+
+            #[cfg(feature = "mithril")]
+            Bootstrapper::Mithril(x) => gasket::runtime::spawn_stage(x, policy),
         }
     }
 }
@@ -87,6 +99,9 @@ pub enum Config {
 
     #[cfg(feature = "aws")]
     S3(s3::Config),
+
+    #[cfg(feature = "mithril")]
+    Mithril(mithril::Config),
 }
 
 impl Config {
@@ -106,6 +121,9 @@ impl Config {
             #[cfg(target_family = "unix")]
             Config::TxOverSocket(c) => Ok(Bootstrapper::TxOverSocket(c.bootstrapper(ctx)?)),
 
+
+            #[cfg(feature = "mithril")]
+            Config::Mithril(c) => Ok(Bootstrapper::Mithril(c.bootstrapper(ctx)?)),
         }
     }
 }
